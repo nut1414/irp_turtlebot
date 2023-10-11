@@ -5,6 +5,9 @@ from socket import TIPC_SUBSCR_TIMEOUT
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from typing import Callable, List, Union
+import logging
+import traceback
 
 from sensor_msgs.msg import LaserScan, BatteryState
 from geometry_msgs.msg import Twist
@@ -28,17 +31,24 @@ class Action:
     return self.By(*args, **kwargs)
   
 class Move(Action):
-  def __init__(self, handler, *args: int, **kwargs: int):
+  def __init__(self, handler: Callable[[int], None], *args: int, **kwargs: int):
     super().__init__(handler, *args, **kwargs)
 
 class Turn(Action):
   def __init__(self, handler, *args: int, **kwargs: int):
      super().__init__(handler, *args, **kwargs)
      
-
+class Checku(Action):
+  def __init__(self, handler: Callable[[], None], *args: int, **kwargs: int):
+    super().__init__(handler, *args, **kwargs)
   
+class GoNextNode(Action):
+  def __init__(self, handler: Callable[[int], None], *args: int, **kwargs: int):
+     super().__init__(handler, *args, **kwargs)
 
-
+class GtnnHandling:
+  node_moved: int = 0
+  node_goal: int = 0
 class Turtlebot3Controller(Node):
 
     def __init__(self):
@@ -60,70 +70,40 @@ class Turtlebot3Controller(Node):
             'angularVelocity':None, #Datatype: geometry_msg/Vector3 (x,y,z)
         }
         self.valuePrevOdometry = self.valueOdometry.copy()
+        self.valueLastNodeOdomentry = self.valueOdometry.copy()
+        self.prevMoveIsComplete = True
         
         self.state = 0
         #Use this timer for the job that should be looping until interrupted
         self.timer = self.create_timer(1,self.timerCallback)
         self.staticMove = []
         
+        
+        self.gtnn: GtnnHandling = GtnnHandling()
+
         self.Move = Move(self.moveByCenti)
         self.Turn = Turn(self.rotateByDegreePerSec)
+        self.SMove = Move(self.special_move_by_centi)
+        self.Checku = Checku(self.check_lidar_to_stop)
+        self.GoNextNode = GoNextNode(self.handling_gtnn)
         
-        self.OdomAllowActions = (Move)
+        self.OdomAllowActions = (Move, Checku, GoNextNode) # TypeError: union can't be used with with isinstance()
         self.TimerAllowActions = (Turn)
         
-        self.prevMoveIsComplete = True
-        self.moveIsComplete = False
         
-        # Testing pattern in a circle
-        # self.staticMove = [
-        #     self.Move.To(10),
-        #     self.Turn.To(90),
-        #     self.Move.To(10),
-        #     self.Turn.To(90),
-        #     self.Move.To(10),
-        #     self.Turn.To(90),
-        #     self.Move.To(10),
-        #     self.Turn.To(90),
-        #   ]
-        
-        # self.staticMove = [
-        #     self.Turn.To(-540),
-        #     self.Turn.To(540),
-            
-        #   ]
-      
-        
-        # Testing pattern for assignment 1.0,1.1
-        # self.staticMove = [
-        #   self.Move.To(300),
-        #   self.Turn.To(-1210),
-        #   self.Move.To(250),
-        #   self.Turn.To(270),
-        #   self.Move.To(50),
-        #   self.Turn.To(-450),
-        #   self.Move.To(50),
-        #   self.Turn.To(-650),
-        #   self.Move.To(100),
-        #   self.Turn.To(850),
-        #   self.Move.To(100),
-        #   self.Turn.To(-500), 
-        #   self.Move.To(120),
-        # ]
-        
-        # self.staticMove = [
-        #   self.Move.To(300 / 2),
-        #   self.Turn.To(-1210),
-        #   self.Move.To(250 / 2),
-        #   self.Turn.To(270),
-        #   self.Move.To(50 / 2),
-        #   self.Turn.To(-650),
-        #   self.Move.To(100 / 2),
-        #   self.Turn.To(850),
-        #   self.Move.To(100 /2),
-        #   self.Turn.To(-500),
-        #   self.Move.To(120/2),
-        # ]
+        self.staticMove = [
+          self.GoNextNode.To(2),
+          self.Turn.By(-90),
+          self.GoNextNode.To(1),
+          self.Turn.By(-90),
+          # self.Turn.By(90),
+          self.Turn.By(-90),
+          # self.Turn.By(-90),
+          self.GoNextNode.To(1),
+          self.Turn.By(90),
+          self.GoNextNode.To(2),
+          
+        ]
         
         
       
@@ -137,6 +117,7 @@ class Turtlebot3Controller(Node):
 
     def degToRad(self, deg):
       return deg * 0.0174532925
+    
     def radToDeg(self, rad):
       if type(rad) != float:
         print("radToDeg")
@@ -185,7 +166,7 @@ class Turtlebot3Controller(Node):
     def distCentiFromPoint(self, pointA, pointB):
       return math.sqrt(((pointA.x - pointB.x) ** 2) + ((pointA.y - pointB.y) ** 2))
     
-    def rotateByDegreePerSec(self, angle):
+    def rotateByDegreePerSec(self, angle) -> None:
       targetAngle = self.degToRad(self.normalizeAngle(angle))
       print("targetAngle Rad"+ str(targetAngle))
       self.publishVelocityCommand(0.0, targetAngle)
@@ -290,7 +271,7 @@ class Turtlebot3Controller(Node):
       # print( self.normolizeAngle(angle))
       # self.publishVelocityCommand(0.0, self.normolizeAngle(angle) * 0.0174532925)
        
-    def moveByCenti(self, length: int) -> None:
+    def moveByCenti(self, length: int) -> bool:
       MOVE_SPEED = 0.15
       MIN_SPEED_FACTOR = 0.4
       
@@ -303,8 +284,9 @@ class Turtlebot3Controller(Node):
       print("distCenti")
       print(distCenti)
       
-      speed_factor = (length - distCenti) / length+0.1
-      speed_factor = MIN_SPEED_FACTOR if speed_factor < MIN_SPEED_FACTOR else speed_factor
+      # speed_factor = (length - distCenti) / length+0.1
+      # speed_factor = MIN_SPEED_FACTOR if speed_factor < MIN_SPEED_FACTOR else speed_factor
+      speed_factor = 1.0
       
       if distCenti < length:
         self.publishVelocityCommand(MOVE_SPEED * speed_factor, 0.0)
@@ -313,15 +295,7 @@ class Turtlebot3Controller(Node):
         self.valuePrevOdometry = self.valueOdometry.copy()
         self.publishVelocityCommand(0.0, 0.0)
         return True
-        
-        
-      
-      # move_length: int  = length
-      # if move_length > MAX_LIN_SPD:
-      #   self.publishVelocityCommand(move_length/100, 0.0)
-      # else:   
-      #   self.publishVelocityCommand(length/100.0,0.0)
-      
+
 
 
     def rotateToNearestObj(self):
@@ -445,16 +419,19 @@ class Turtlebot3Controller(Node):
       return min_val
     
     def whatDoISee(self):
+      print("what do i see!")
       ls = self.valueLaserRaw["ranges"]
       # print("check1")
       
-      Front, Left, Back, Right = self.minDistofCone(ls[330:] + ls[:30]), self.minDistofCone(ls[60:120]), self.minDistofCone(ls[150:210]), self.minDistofCone(ls[240:300])
+      # Front, Left, Back, Right = self.minDistofCone(ls[330:] + ls[:30]), self.minDistofCone(ls[60:120]), self.minDistofCone(ls[150:210]), self.minDistofCone(ls[240:300])
+      Front, Left, Back, Right = self.minDistofCone(ls[345:] + ls[:15]), self.minDistofCone(ls[75:105]), self.minDistofCone(ls[165:195]), self.minDistofCone(ls[255:285])
 
 
       textFront, textRight, textBack, textLeft = "\033[0;0m", "\033[0;0m", "\033[0;0m", "\033[0;0m"
       
       
-      DIST_CONE = 0.2
+      # DIST_CONE = 0.2
+      DIST_CONE = 0.25
       
       
       if Front < DIST_CONE:
@@ -490,28 +467,113 @@ class Turtlebot3Controller(Node):
       Front, Left, Back , Right = self.whatDoISee()
       LeftDist, RightDist = self.minDistofCone(ls[60:120]), self.minDistofCone(ls[240:300])
       
+      # for assignment 2
+      # BASE_SPEED = 0.07
+      # TURN_SPEED = self.degToRad(4.6)  
+      
+      # for go to next node
       BASE_SPEED = 0.07
-      TURN_SPEED = self.degToRad(4.6)
+      TURN_SPEED = self.degToRad(4.3)
       THRESHOLD = 0.04
+      
+      print("Left Dist",LeftDist)
+      print("Right Dist",RightDist)
       
       
       turnSpecial = -TURN_SPEED if RightDist > LeftDist+THRESHOLD else TURN_SPEED
       
       if not Front:
-        if RightDist > LeftDist+THRESHOLD:
-          print("Turn Left")
-          self.publishVelocityCommand(BASE_SPEED * 0.9, -TURN_SPEED *  (LeftDist/RightDist))
-        elif LeftDist > RightDist+THRESHOLD:
+        if RightDist > LeftDist+THRESHOLD and Left:
           print("Turn Right")
-          self.publishVelocityCommand(BASE_SPEED * 0.9, TURN_SPEED * (RightDist/LeftDist))
+          self.publishVelocityCommand(BASE_SPEED, -TURN_SPEED *  (LeftDist/RightDist))
+        elif LeftDist > RightDist+THRESHOLD and Right:
+          print("Turn Left")
+          self.publishVelocityCommand(BASE_SPEED, TURN_SPEED * (RightDist/LeftDist))
         else:
           print("Forward")
           self.publishVelocityCommand(BASE_SPEED, 0.0)
       else:
         self.publishVelocityCommand(0.002, turnSpecial*1.35)
         pass
+      
+    def check_lidar_to_stop(self):
+      # what do I see to check bot should stop.
+      Front, Left, Back , Right = self.whatDoISee()
+      forceStop: bool = Front 
+      print("check if should stop")
+      
+      if self.gtnn.node_moved >= self.gtnn.node_goal: # if the bot moved enough and found a wall in front
+        print("reach goal")
         
-        
+        self.gtnn.node_goal = 0
+      elif forceStop:
+        print("force stop")
+        self.staticMove.clear()
+        # reset current goal
+        self.gtnn.node_goal = 0 
+      print(self.gtnn.node_moved)
+      return True
+    
+    def handling_gtnn(self, n_node: int) -> bool:
+      # print("started")
+      # reset current moved and goal
+      self.gtnn.node_moved = 0
+      self.gtnn.node_goal = n_node
+      inserted_script: List[Action] = n_node * [self.SMove.To(50), self.Checku.By()]
+      # print("inserted")
+      
+      self.staticMove.pop(0) # pop GTNN out before adding new task
+      
+      self.staticMove = inserted_script + self.staticMove
+      print(self.staticMove)
+      
+      return False
+    
+    def special_move_by_centi(self, length: int) -> bool:
+      
+      ls = self.valueLaserRaw["ranges"]
+      
+      state: bool = self.moveByCentiCorridorFollow(length)
+      if state:
+        self.gtnn.node_moved += 1
+      
+      return state
+    
+    def moveByCentiCorridorFollow(self, length: int) -> bool:
+      '''
+        Corridor follow center path but follow the lenght like moveByCenti
+      '''
+      ls = self.valueLaserRaw["ranges"]
+      Front, Left, Back , Right = self.whatDoISee()
+      LeftDist, RightDist = self.minDistofCone(ls[60:120]), self.minDistofCone(ls[240:300])
+      
+      prevPos = self.valuePrevOdometry['position']
+      currentPos  = self.valueOdometry['position']
+      
+      distCenti = self.distCentiFromPoint(prevPos,currentPos) * 100.0
+      
+      
+      BASE_SPEED = 0.04
+      TURN_SPEED = self.degToRad(4.3)
+      THRESHOLD = 0.04
+      
+      print("Left Dist",LeftDist)
+      print("Right Dist",RightDist)
+      
+      if distCenti < length and not Front:
+        if RightDist > LeftDist+THRESHOLD and Left:
+          print("Turn Right")
+          self.publishVelocityCommand(BASE_SPEED, -TURN_SPEED *  (LeftDist/RightDist))
+        elif LeftDist > RightDist+THRESHOLD and Right:
+          print("Turn Left")
+          self.publishVelocityCommand(BASE_SPEED, TURN_SPEED * (RightDist/LeftDist))
+        else:
+          print("Forward")
+          self.publishVelocityCommand(BASE_SPEED, 0.0)
+        return False
+      else:
+        self.valuePrevOdometry = self.valueOdometry.copy()
+        return True
       
       
       
@@ -537,8 +599,8 @@ class Turtlebot3Controller(Node):
         
         
         # #
-        self.whatDoISee()
-        self.corridorFollow()
+        # self.whatDoISee()
+        # self.corridorFollow()
 
     def batteryStateCallback(self, msg):
         self.valueBatteryState = msg
@@ -565,16 +627,21 @@ class Turtlebot3Controller(Node):
 
         if (len(self.staticMove) != 0):
           current_move = self.staticMove[0]
+          # print(current_move)
           if isinstance(current_move, self.OdomAllowActions):
+            # print("odom_move")
             self.moveIsComplete = current_move.execute()
+            print("odom_move_execute")
             if self.moveIsComplete:
               print("next_move")
               self.prevMoveIsComplete = True
               self.moveIsComplete = False
-              self.publishVelocityCommand(0.0,0.0)
               if len(self.staticMove) > 0:
                 self.staticMove.pop(0)
                 print("pop")
+        else:
+          self.publishVelocityCommand(0.0,0.0)
+          
             
           
 
@@ -584,7 +651,7 @@ class Turtlebot3Controller(Node):
       # print("OdomValue")
       # print(self.valueOdometry)
       
-      
+      print(self.staticMove)
       if (len(self.staticMove) != 0):
         current_move = self.staticMove[0]
         # special case for turn -> robot cant turn that quickly
@@ -618,7 +685,7 @@ class Turtlebot3Controller(Node):
           if self.prevMoveIsComplete == False:
             self.prevMoveIsComplete = True
             self.moveIsComplete = False
-            self.publishVelocityCommand(0.0,0.0)
+            self.publishVelocityCommand(0.0,0.0) 
             print("next_move")
             if len(self.staticMove) > 0:
               self.staticMove.pop(0)
@@ -626,6 +693,8 @@ class Turtlebot3Controller(Node):
           else:
             self.prevMoveIsComplete = False
             self.moveIsComplete = current_move.execute()
+      else:
+        self.publishVelocityCommand(0.0,0.0)
 
               
             
@@ -647,7 +716,11 @@ def main(args=None):
     print('tb3ControllerNode created')
     try:
         rclpy.spin(tb3ControllerNode)
-    except:
+    except Exception as e:
+        # adding traceback
+        logging.error(traceback.format_exc())
+        tb3ControllerNode.publishVelocityCommand(0.0,0.0)
+        
         KeyboardInterrupt
     print('Done')
     
