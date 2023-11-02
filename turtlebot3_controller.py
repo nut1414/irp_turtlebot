@@ -92,16 +92,16 @@ class Turtlebot3Controller(Node):
         
         
         self.staticMove = [
-          self.GoNextNode.To(2),
-          self.Turn.By(-90),
-          self.GoNextNode.To(1),
-          self.Turn.By(-90),
-          # self.Turn.By(90),
-          self.Turn.By(-90),
+          self.GoNextNode.To(3),
           # self.Turn.By(-90),
-          self.GoNextNode.To(1),
-          self.Turn.By(90),
-          self.GoNextNode.To(2),
+          # self.GoNextNode.To(1),
+          # self.Turn.By(-90),
+          # # self.Turn.By(90),
+          # self.Turn.By(-90),
+          # # self.Turn.By(-90),
+          # self.GoNextNode.To(1),
+          # self.Turn.By(90),
+          # self.GoNextNode.To(2),
           
         ]
         
@@ -431,7 +431,7 @@ class Turtlebot3Controller(Node):
       
       
       # DIST_CONE = 0.2
-      DIST_CONE = 0.25
+      DIST_CONE = 0.2
       
       
       if Front < DIST_CONE:
@@ -519,7 +519,7 @@ class Turtlebot3Controller(Node):
       # reset current moved and goal
       self.gtnn.node_moved = 0
       self.gtnn.node_goal = n_node
-      inserted_script: List[Action] = n_node * [self.SMove.To(50), self.Checku.By()]
+      inserted_script: List[Action] = n_node * [self.SMove.To(30), self.Checku.By()]
       # print("inserted")
       
       self.staticMove.pop(0) # pop GTNN out before adding new task
