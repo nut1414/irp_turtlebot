@@ -46,6 +46,11 @@ class GoNextNode(Action):
   def __init__(self, handler: Callable[[int], None], *args: int, **kwargs: int):
      super().__init__(handler, *args, **kwargs)
 
+class Think(Action):
+  def __init__(self, handler: Callable[[int], None], *args: int, **kwargs: int):
+     super().__init__(handler, *args, **kwargs)
+     
+
 class GtnnHandling:
   node_moved: int = 0
   node_goal: int = 0
@@ -83,28 +88,91 @@ class Turtlebot3Controller(Node):
 
         self.Move = Move(self.moveByCenti)
         self.Turn = Turn(self.rotateByDegreePerSec)
-        self.SMove = Move(self.special_move_by_centi)
+        self.SMove = Move(self.node_move_by_centi)
         self.Checku = Checku(self.check_lidar_to_stop)
         self.GoNextNode = GoNextNode(self.handling_gtnn)
+        self.Think = Think(self.universal_plan)
         
-        self.OdomAllowActions = (Move, Checku, GoNextNode) # TypeError: union can't be used with with isinstance()
+        self.OdomAllowActions = (Move, Checku, GoNextNode, Think) # TypeError: union can't be used with with isinstance()
         self.TimerAllowActions = (Turn)
         
         
         self.staticMove = [
-          self.GoNextNode.To(3),
-          # self.Turn.By(-90),
-          # self.GoNextNode.To(1),
-          # self.Turn.By(-90),
-          # # self.Turn.By(90),
-          # self.Turn.By(-90),
-          # # self.Turn.By(-90),
-          # self.GoNextNode.To(1),
-          # self.Turn.By(90),
-          # self.GoNextNode.To(2),
           
         ]
         
+        # # Assignment 4.0
+        #
+        # # Top-left
+        # self.staticMove = [
+        #   self.GoNextNode.To(2),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(2),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(2),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(1),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(1),
+        # ]
+        
+        # # Top-Middle
+        # self.staticMove = [
+        #   self.GoNextNode.To(2),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(2),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(1),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(1),
+        # ]
+        
+        # # Top-Right
+        # self.staticMove = [
+        #   self.GoNextNode.To(2),
+        #   self.Turn.By(90), # Turn Left
+        #   self.GoNextNode.To(2),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(2),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(1),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(1),
+        # ]
+        
+        # # Bottom-Left
+        # self.staticMove = [
+        #   self.Turn.By(90), # Turn Left
+        #   self.GoNextNode.To(1),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(1),
+        # ]
+        
+        # # Bottom-Middle
+        # self.staticMove = [
+        #   self.Turn.By(90), # Turn Left
+        #   self.GoNextNode.To(2),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(1),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(1),
+        # ]
+        
+        # # Bottom-Right
+        # self.staticMove = [
+        #   self.GoNextNode.To(4),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(1),
+        #   self.Turn.By(-90), # Turn Right
+        #   self.GoNextNode.To(1),
+        # ]
+        
+        ## End Assignment 4.0
+        
+        # Assignment 4.1
+        self.staticMove = [
+          self.Think.by()
+        ]
         
       
         
@@ -515,11 +583,12 @@ class Turtlebot3Controller(Node):
       return True
     
     def handling_gtnn(self, n_node: int) -> bool:
+      NODE_LENGTH = 29.2
       # print("started")
       # reset current moved and goal
       self.gtnn.node_moved = 0
       self.gtnn.node_goal = n_node
-      inserted_script: List[Action] = n_node * [self.SMove.To(30), self.Checku.By()]
+      inserted_script: List[Action] = n_node * [self.SMove.To(NODE_LENGTH), self.Checku.By()]
       # print("inserted")
       
       self.staticMove.pop(0) # pop GTNN out before adding new task
@@ -529,8 +598,61 @@ class Turtlebot3Controller(Node):
       
       return False
     
-    def special_move_by_centi(self, length: int) -> bool:
+    def universal_plan(self) -> bool:
+      # check lidar direction
+      F, L, B , R = self.whatDoISee()
       
+      moveForward = [self.GoNextNode.by(1), self.Think.by()]
+      turnLeft = [self.Turn.by(90), self.Think.by()]
+      turnRight = [self.Turn.by(-90), self.Think.by()]
+      stop = []
+      
+      
+      ## One Side
+      # left, back
+      if     (L       and (not R) and (not F) and (not B))\
+          or ((not L) and (not R) and (not F) and B      ):
+        self.staticMove = moveForward
+      # right
+      elif   ((not L) and R       and (not F) and (not B)):
+        self.staticMove = turnLeft  
+      # front
+      elif   ((not L) and (not R) and F       and (not B)):
+        self.staticMove = turnRight 
+        
+      ## Two Side
+      # left front, left back, front back 
+      elif   (L       and (not R) and F       and (not B))\
+          or (L       and (not R) and (not F) and B      )\
+          or ((not L) and (not R) and F       and B      ):
+        self.staticMove = turnRight
+      # right front
+      elif   ((not L) and R       and  F      and (not B)):
+        self.staticMove = turnLeft 
+      # right back, left right
+      elif   ((not L) and R       and (not F) and B      )\
+          or (L       and R       and (not F) and (not B)):
+        self.staticMove = moveForward 
+      
+      ### Three side 
+      elif   (L       and R       and F       and (not B)):
+        self.staticMove = stop # done
+        
+      # other case  
+      # front is blocked
+      elif   (((not L) or (not R) or (not B)) and F      ):
+        self.staticMove = turnRight
+      # front is not blocked
+      elif F:
+        self.staticMove = moveForward  
+      
+      return False
+      
+        
+
+      
+    
+    def node_move_by_centi(self, length: int) -> bool:
       ls = self.valueLaserRaw["ranges"]
       
       state: bool = self.moveByCentiCorridorFollow(length)
